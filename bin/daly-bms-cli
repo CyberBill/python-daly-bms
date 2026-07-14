@@ -89,6 +89,7 @@ if args.mqtt:
     mqtt_client.enable_logger(logger)
     mqtt_client.username_pw_set(args.mqtt_user, args.mqtt_password)
     mqtt_client.connect(args.mqtt_broker, port=args.mqtt_port)
+    mqtt_client.loop_start()
 
 
 def build_mqtt_hass_config_discovery(base):
@@ -136,8 +137,24 @@ def build_mqtt_hass_config_discovery(base):
 
 
 def mqtt_single_out(topic, data, retain=False):
-    logger.debug(f'Send data: {data} on topic: {topic}, retain flag: {retain}')
-    mqtt_client.publish(topic, data, retain=retain)
+    logger.debug(
+        f'Send data: {data} on topic: {topic}, retain flag: {retain}'
+    )
+
+    publish_result = mqtt_client.publish(
+        topic,
+        data,
+        qos=1,
+        retain=retain,
+    )
+
+    publish_result.wait_for_publish()
+
+    if publish_result.rc != 0:
+        raise RuntimeError(
+            f'MQTT publish failed for topic {topic}, '
+            f'result code: {publish_result.rc}'
+        )
 
 
 def mqtt_iterator(result, base=''):
@@ -155,7 +172,7 @@ def mqtt_iterator(result, base=''):
             else:
                 val = result[key]
 
-            mqtt_single_out(f'{args.mqtt_topic}{base}/{key}', val)
+            mqtt_single_out(f'{args.mqtt_topic}{base}/{key}', val, retain=True)
 
 
 def print_result(result):
@@ -249,6 +266,7 @@ if args.restart:
     
 if mqtt_client:
     mqtt_client.disconnect()
+    mqtt_client.loop_stop()
 
 bms.disconnect()
 
