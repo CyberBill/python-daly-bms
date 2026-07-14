@@ -112,12 +112,14 @@ def build_mqtt_hass_config_discovery(base):
     elif 'current' in base:
         hass_config_data["device_class"] = 'current'
         hass_config_data["unit_of_measurement"] = 'A'
-    elif 'temperatures' in base:
+    elif 'temperature' in base and not 'sensor' in base:
         hass_config_data["device_class"] = 'temperature'
         hass_config_data["unit_of_measurement"] = '°C'
+        hass_config_data["state_class"] = 'measurement'
+        hass_config_data["suggested_display_precision"] = 1
     elif 'capacity' in base:
-        hass_config_data["device_class"] = 'energy'
         hass_config_data["unit_of_measurement"] = 'Ah'
+        hass_config_data["state_class"] = 'measurement'
     else:
         pass
 
