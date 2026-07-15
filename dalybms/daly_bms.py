@@ -6,6 +6,82 @@ import logging
 
 from .error_codes import ERROR_CODES
 
+# =============================================================================
+# DALY SMART BMS PROTOCOL IMPLEMENTATION STATUS
+# =============================================================================
+#
+# References:
+#   - Official Daly RS485/UART Protocol (v1.x)
+#   - DIY Solar Forum:
+#       https://diysolarforum.com/threads/decoding-the-daly-smartbms-protocol.21898/
+#
+# Command  Description                              Status
+# -------  --------------------------------------   ----------------------------
+# 0x50     Parameter block #1                       TODO
+# 0x51     Parameter block #2                       TODO
+# 0x52     Parameter block #3                       TODO
+# 0x53     Parameter block #4                       TODO
+# 0x54     Unknown / unsupported                    Unsupported on test BMS
+# 0x55     Unknown                                 TODO
+# 0x56     Production date / manufacturing code     TODO
+# 0x57     Battery code                             ✓ Implemented
+# 0x58     Unknown                                 TODO
+# 0x59     Protection parameters #1                TODO
+# 0x5A     Protection parameters #2                TODO
+# 0x5B     Protection parameters #3                TODO
+# 0x5C     Protection parameters #4                TODO
+# 0x5D     Protection parameters #5                TODO
+# 0x5E     Protection parameters #6                TODO
+# 0x5F     Protection parameters #7                TODO
+# 0x60     Temperature parameters                  TODO
+# 0x61     Production timestamp / metadata         TODO
+# 0x62     BMS Software Version                     ✓ Implemented
+# 0x63     BMS Hardware Version                     ✓ Implemented
+# 0x64     Unknown                                 TODO
+# 0x65     Board Number / Slave Number             TODO
+# 0x66     Fan / MOS / Self-consumption            TODO
+# 0x67     Unknown                                 TODO
+# 0x68     Unknown                                 TODO
+# 0x69     Inverter / CAN Settings                 TODO
+# 0x6A     Serial Number                            ✓ Implemented
+#
+# Standard telemetry
+#
+# 0x90     Pack Voltage / Current / SOC             ✓ Implemented
+# 0x91     Cell Voltage Range                       ✓ Implemented
+# 0x92     Temperature Range                        ✓ Implemented
+# 0x93     MOSFET Status                            ✓ Implemented
+# 0x94     Pack Status                              ✓ Implemented
+# 0x95     Cell Voltages                            ✓ Implemented
+# 0x96     Temperatures                             ✓ Implemented
+# 0x97     Cell Balancing                           ✓ Implemented
+# 0x98     Errors / Alarms                          ✓ Implemented
+# 0x99     Extended Status                          TODO
+#
+# Engineering / Optional
+#
+# 0xD8     Active Equilibrium                       TODO
+# 0xE0     CADC Module                             TODO
+# 0xE1     Current Limit Module                    TODO
+# 0xE2     SC Speed Up                             TODO
+# 0xE3     WNT Software Version?                   TODO
+# 0xE4     WNT Hardware Version?                   TODO
+# 0xE5     Unknown                                 TODO
+# 0xE6     Engineering Settings                    TODO
+#
+# Notes
+# -----
+# * Commands marked TODO have been observed in the Windows BMSMonitor
+#   application but have not yet been decoded.
+# * Unsupported indicates the command is issued by BMSMonitor but returns
+#   no response on the current test hardware.
+# * ASCII multi-frame commands currently implemented:
+#       0x57 Battery Code
+#       0x62 BMS Software Version
+#       0x63 BMS Hardware Version
+#       0x6A Serial Number
+#
+# =============================================================================
 
 class DalyBMS:
     def __init__(self, request_retries=3, address=4, bms_id=1, logger=None):
@@ -330,6 +406,21 @@ class DalyBMS:
         # todo: get sample data and verify result
         return {"error": "not implemented"}
 
+    def get_board_info(self, response_data=None):
+        if not response_data:
+            response_data = self._read_request("65")
+
+        if not response_data:
+            return False
+
+        # First two bytes are known, remaining are unknown
+        board, slave = struct.unpack(">BBxxxxxx", response_data)
+
+        return {
+            "board_number": board,
+            "slave_number": slave,
+        }
+
     def get_errors(self, response_data=None):
         # Battery failure status
         if not response_data:
@@ -417,6 +508,7 @@ class DalyBMS:
             "serial_number": self.get_serial_number(),
             "bms_sw_version": self.get_bms_sw_version(),
             "bms_hw_version": self.get_bms_hw_version(),
+            "board": self.get_board_info(),
         }
     
     def set_charge_mosfet(self, on=True, response_data=None):
