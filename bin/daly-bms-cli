@@ -58,6 +58,11 @@ parser.add_argument("--mqtt-password",
                     help="Password to authenticate MQTT with",
                     type=str)
 
+parser.add_argument("--discover",
+                    help="Scan RS485 BMS IDs (1-32) and report detected devices",
+                    action="store_true",
+)
+
 args = parser.parse_args()
 
 log_format = '%(levelname)-8s [%(filename)s:%(lineno)d] %(message)s'
@@ -67,19 +72,34 @@ else:
     level = logging.WARNING
 
 logging.basicConfig(level=level, format=log_format, datefmt='%H:%M:%S')
-
 logger = logging.getLogger()
+
+silent_logger = logging.getLogger()
+silent_logger.setLevel(logging.CRITICAL)
+silent_logger.propagate = False
+
+bms = None
 
 if args.uart:
     address = 8
 else:
     address = 4
 
-if args.sinowealth:
-    bms = DalyBMSSinowealth(request_retries=args.retry, logger=logger)
-else:
-    bms = DalyBMS(request_retries=args.retry, address=address, bms_id=args.bms_id, logger=logger)
-bms.connect(device=args.device)
+if not args.discover:
+    if args.sinowealth:
+        bms = DalyBMSSinowealth(
+            request_retries=args.retry,
+            logger=logger,
+        )
+    else:
+        bms = DalyBMS(
+            request_retries=args.retry,
+            address=address,
+            bms_id=args.bms_id,
+            logger=logger,
+        )
+
+    bms.connect(device=args.device)
 
 result = False
 
@@ -185,7 +205,94 @@ def print_result(result):
     else:
         print(json.dumps(result, indent=2))
 
+def discover_bms_devices():
+    """
+    Scan Daly RS485 BMS IDs 1 through 32.
 
+    A BMS is considered present when it returns valid board information.
+    Additional identity fields are queried only after that first response.
+    """
+    discovered = []
+
+    print(f"Scanning Daly BMS IDs 1-32 on {args.device}...")
+    print()
+
+    for bms_id in range(1, 33):
+        logger.debug("Scanning BMS ID %d", bms_id)
+
+        candidate = DalyBMS(
+            request_retries=1,
+            address=address,
+            bms_id=bms_id,
+            logger=silent_logger,
+        )
+
+        try:
+            candidate.connect(device=args.device)
+
+            board_info = candidate.get_board_info()
+
+            if not board_info:
+                print(".", end="", flush=True)
+                continue
+
+            print(f"[{bms_id}]", end="", flush=True)
+
+            serial_number = candidate.get_serial_number()
+            battery_code = candidate.get_battery_code()
+
+            device = {
+                "bms_id": bms_id,
+                "board_number": board_info.get("board_number"),
+                "slave_number": board_info.get("slave_number"),
+                "serial_number": serial_number or None,
+                "battery_code": battery_code or None,
+            }
+
+            discovered.append(device)
+            
+        except Exception:
+            print(".", end="", flush=True)
+
+        finally:
+            candidate.disconnect()
+
+    print()
+    print()
+
+    for device in discovered:
+        print(f"ID {device['bms_id']}")
+        print(f"  Board number: {device['board_number']}")
+        print(f"  Slave number: {device['slave_number']}")
+        print(
+            f"  Serial number: "
+            f"{device['serial_number'] or 'Unavailable'}"
+        )
+        print(
+            f"  Battery code: "
+            f"{device['battery_code'] or 'Unavailable'}"
+        )
+        print()
+
+    print(
+        f"Found {len(discovered)} BMS "
+        f"{'device' if len(discovered) == 1 else 'devices'}."
+    )
+
+    return discovered
+
+    return discovered
+
+if args.discover:
+    if args.uart:
+        print("--discover is only supported over RS485.")
+        sys.exit(1)
+
+    if args.sinowealth:
+        print("--discover is not supported for Sinowealth devices.")
+        sys.exit(1)
+
+    result = discover_bms_devices()
 if args.status:
     result = bms.get_status()
     print_result(result)
@@ -278,7 +385,8 @@ if mqtt_client:
     mqtt_client.disconnect()
     mqtt_client.loop_stop()
 
-bms.disconnect()
+if bms:
+    bms.disconnect()
 
 if not result:
     sys.exit(1)
