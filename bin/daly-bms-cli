@@ -20,6 +20,7 @@ parser.add_argument("--cell-voltages", help="show cell voltages", action="store_
 parser.add_argument("--temperatures", help="show temperature sensor values", action="store_true")
 parser.add_argument("--balancing", help="show cell balancing status", action="store_true")
 parser.add_argument("--errors", help="show BMS errors", action="store_true")
+parser.add_argument("--battery-code",help="show configured battery code",action="store_true")
 parser.add_argument("--all", help="show all", action="store_true")
 parser.add_argument("--check", help="Nagios style check", action="store_true")
 parser.add_argument("--set-charge-mosfet", help="'on' or 'off'", type=str)
@@ -206,6 +207,9 @@ if args.balancing:
     print_result(result)
 if args.errors:
     result = bms.get_errors()
+    print_result(result)
+if args.battery_code:
+    result = bms.get_battery_code()
     print_result(result)
 if args.all:
     result = bms.get_all()

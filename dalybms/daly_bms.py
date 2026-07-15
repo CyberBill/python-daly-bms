@@ -355,6 +355,47 @@ class DalyBMS:
             byte_index += 1
         return errors
 
+    def get_battery_code(self, response_data=None):
+        """
+        Read the configurable Daly battery-code field.
+
+        Command 0x57 returns five frames. Each frame contains:
+        byte 0: frame number, 1 through 5
+        bytes 1-7: ASCII text
+
+        The complete field is therefore up to 35 ASCII characters.
+        """
+        if not response_data:
+            response_data = self._read_request("57",max_responses=5,return_list=True)
+        if not response_data:
+            return False
+
+        battery_code_parts = []
+
+        for expected_frame, frame in enumerate(response_data, start=1):
+            frame_number, text = struct.unpack(">B7s", frame)
+
+            if frame_number != expected_frame:
+                self.logger.warning(
+                    "battery-code frame out of order: expected %i, got %i",
+                    expected_frame,
+                    frame_number,
+                )
+
+            battery_code_parts.append(
+                text.decode("utf-8", errors="replace")
+            )
+
+        battery_code = "".join(battery_code_parts)
+
+        # Daly pads unused characters with NUL bytes and sometimes spaces.
+        battery_code = battery_code.replace("\x00", " ").strip()
+
+        # Collapse repeated padding spaces.
+        battery_code = " ".join(battery_code.split())
+
+        return battery_code
+
     def get_all(self):
         return {
             "soc": self.get_soc(),
@@ -365,7 +406,8 @@ class DalyBMS:
             "cell_voltages": self.get_cell_voltages(),
             "temperatures": self.get_temperatures(),
             "balancing_status": self.get_balancing_status(),
-            "errors": self.get_errors()
+            "errors": self.get_errors(),
+            "battery_code": self.get_battery_code(),
         }
     
     def set_charge_mosfet(self, on=True, response_data=None):
