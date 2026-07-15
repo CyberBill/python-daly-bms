@@ -355,10 +355,10 @@ class DalyBMS:
             byte_index += 1
         return errors
     
-    def _read_ascii_frames(self, command):
+    def _read_ascii_frames(self, command, frames):
         response_data = self._read_request(
             command,
-            max_responses=5,
+            max_responses=frames,
             return_list=True,
         )
 
@@ -391,10 +391,16 @@ class DalyBMS:
         return text.strip()
 
     def get_battery_code(self):
-        return self._read_ascii_frames("57")
+        return self._read_ascii_frames("57", 5)
     
     def get_serial_number(self):
-        return self._read_ascii_frames("6a")
+        return self._read_ascii_frames("6a", 5)
+    
+    def get_bms_sw_version(self):
+        return self._read_ascii_frames("62", 2)
+    
+    def get_bms_hw_version(self):
+        return self._read_ascii_frames("63", 2)
 
     def get_all(self):
         return {
@@ -409,6 +415,8 @@ class DalyBMS:
             "errors": self.get_errors(),
             "battery_code": self.get_battery_code(),
             "serial_number": self.get_serial_number(),
+            "bms_sw_version": self.get_bms_sw_version(),
+            "bms_hw_version": self.get_bms_hw_version(),
         }
     
     def set_charge_mosfet(self, on=True, response_data=None):
