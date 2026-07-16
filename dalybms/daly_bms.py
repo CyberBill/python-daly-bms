@@ -404,7 +404,7 @@ class DalyBMS:
             cells[cell] = bool(int(bits[cell * -1]))
         self.logger.info(cells)
         # todo: get sample data and verify result
-        return {"error": "not implemented"}
+        return None
 
     def get_board_info(self, response_data=None):
         if not response_data:

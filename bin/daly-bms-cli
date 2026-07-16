@@ -2,6 +2,7 @@
 import argparse
 import json
 import logging
+import re
 import sys
 
 from dalybms import DalyBMS
@@ -36,9 +37,12 @@ parser.add_argument("--mqtt", help="Write output to MQTT", action="store_true")
 parser.add_argument("--mqtt-hass", help="MQTT Home Assistant Mode", action="store_true")
 
 parser.add_argument("--mqtt-topic",
-                    help="MQTT topic to write to. default daly_bms",
+                    help=(
+                        "MQTT topic root. If omitted, defaults to "
+                        "battery/daly/<serial-number>"
+                    ),
                     type=str,
-                    default="daly_bms")
+                    default=None)
 
 parser.add_argument("--mqtt-broker",
                     help="MQTT broker (server). default localhost",
@@ -104,7 +108,96 @@ if not args.discover:
 result = False
 
 mqtt_client = None
+bms_serial_number = None
+mqtt_device_id = None
+mqtt_device_name = None
+mqtt_topic_root = None
+
+def sanitize_identifier(value):
+    """
+    Convert a serial number or label into a safe MQTT/HA identifier.
+    """
+    return re.sub(
+        r"[^a-z0-9_]+",
+        "_",
+        str(value).lower(),
+    ).strip("_")
+
+
+def humanize_entity_name(base):
+    """
+    Convert an MQTT path into a concise Home Assistant entity name.
+
+    Examples:
+      /soc/total_voltage     -> Total Voltage
+      /cell_voltages/12      -> Cell 12 Voltage
+      /temperatures/1        -> Temperature 1
+    """
+    parts = [
+        part
+        for part in base.strip("/").split("/")
+        if part
+    ]
+
+    if len(parts) == 2 and parts[0] == "cell_voltages":
+        return f"Cell {int(parts[1]):02d} Voltage"
+
+    if len(parts) == 2 and parts[0] == "temperatures":
+        return f"Temperature {parts[1]}"
+
+    leaf = parts[-1] if parts else "value"
+
+    friendly_names = {
+        "total_voltage": "Pack Voltage",
+        "current": "Current",
+        "soc_percent": "State of Charge",
+        "battery_code": "Battery Code",
+        "serial_number": "Serial Number",
+        "bms_sw_version": "BMS Software Version",
+        "bms_hw_version": "BMS Hardware Version",
+        "board_number": "Board Number",
+        "slave_number": "Slave Number",
+        "highest_voltage": "Highest Cell Voltage",
+        "lowest_voltage": "Lowest Cell Voltage",
+        "highest_cell": "Highest Cell Number",
+        "lowest_cell": "Lowest Cell Number",
+        "highest_temperature": "Highest Temperature",
+        "lowest_temperature": "Lowest Temperature",
+        "highest_sensor": "Highest Temperature Sensor",
+        "lowest_sensor": "Lowest Temperature Sensor",
+    }
+
+    if leaf in friendly_names:
+        return friendly_names[leaf]
+
+    return leaf.replace("_", " ").title()
+
 if args.mqtt:
+    bms_serial_number = bms.get_serial_number()
+
+    if not bms_serial_number:
+        logger.error(
+            "Unable to read BMS serial number; "
+            "cannot create a stable MQTT identity"
+        )
+        bms.disconnect()
+        sys.exit(1)
+
+    serial_identifier = sanitize_identifier(
+        bms_serial_number
+    )
+
+    mqtt_device_id = f"daly_{serial_identifier}"
+    mqtt_device_name = (
+        f"Daly BMS {bms_serial_number}"
+    )
+
+    mqtt_topic_root = (
+        args.mqtt_topic.rstrip("/")
+        if args.mqtt_topic
+        else f"battery/daly/{bms_serial_number}"
+    )
+
     import paho.mqtt.client as paho
 
     mqtt_client = paho.Client()
@@ -115,49 +208,83 @@ if args.mqtt:
 
 
 def build_mqtt_hass_config_discovery(base):
-    # Instead of daly_bms should be here added a proper name (unique), like serial or something
-    # At this point it can be used only one daly_bms system with hass discovery
+    entity_path = sanitize_identifier(
+        base.replace("/", "_")
+    )
 
-    hass_config_topic = f'homeassistant/sensor/daly_bms/{base.replace("/", "_")}/config'
-    hass_config_data = {}
+    entity_unique_id = (
+        f"{mqtt_device_id}_{entity_path}"
+    )
 
-    hass_config_data["unique_id"] = f'daly_bms_{base.replace("/", "_")}'
-    hass_config_data["name"] = f'Daly BMS {base.replace("/", " ")}'
+    hass_config_topic = (
+        f"homeassistant/sensor/"
+        f"{mqtt_device_id}/"
+        f"{entity_path}/config"
+    )
 
-    if 'soc_percent' in base:
-        hass_config_data["device_class"] = 'battery'
-        hass_config_data["unit_of_measurement"] = '%'
-    elif 'voltage' in base and not ('lowest_cell' in base or 'highest_cell' in base):
-        hass_config_data["device_class"] = 'voltage'
-        hass_config_data["unit_of_measurement"] = 'V'
-        hass_config_data["suggested_display_precision"] = 3
-    elif 'current' in base:
-        hass_config_data["device_class"] = 'current'
-        hass_config_data["unit_of_measurement"] = 'A'
-    elif 'temperature' in base and not 'sensor' in base:
-        hass_config_data["device_class"] = 'temperature'
-        hass_config_data["unit_of_measurement"] = '°C'
-        hass_config_data["state_class"] = 'measurement'
-        hass_config_data["suggested_display_precision"] = 1
-    elif 'capacity' in base:
-        hass_config_data["unit_of_measurement"] = 'Ah'
-        hass_config_data["state_class"] = 'measurement'
-    else:
-        pass
+    state_topic = (
+        f"{mqtt_topic_root}{base}"
+    )
 
-    hass_config_data["json_attributes_topic"] = f'{args.mqtt_topic}{base}'
-    hass_config_data["state_topic"] = f'{args.mqtt_topic}{base}'
+    hass_config_data = {
+        "unique_id": entity_unique_id,
+        "name": humanize_entity_name(base),
+        "state_topic": state_topic,
+    }
+
+    if "soc_percent" in base:
+        hass_config_data["device_class"] = "battery"
+        hass_config_data["unit_of_measurement"] = "%"
+        hass_config_data["state_class"] = "measurement"
+
+    elif (
+        "voltage" in base
+        and not (
+            "lowest_cell" in base
+            or "highest_cell" in base
+        )
+    ):
+        hass_config_data["device_class"] = "voltage"
+        hass_config_data["unit_of_measurement"] = "V"
+        hass_config_data["state_class"] = "measurement"
+        hass_config_data[
+            "suggested_display_precision"
+        ] = 3
+
+    elif "current" in base:
+        hass_config_data["device_class"] = "current"
+        hass_config_data["unit_of_measurement"] = "A"
+        hass_config_data["state_class"] = "measurement"
+
+    elif (
+        "temperature" in base
+        and "sensor" not in base
+    ):
+        hass_config_data["device_class"] = "temperature"
+        hass_config_data["unit_of_measurement"] = "°C"
+        hass_config_data["state_class"] = "measurement"
+        hass_config_data[
+            "suggested_display_precision"
+        ] = 1
+
+    elif "capacity" in base:
+        hass_config_data["unit_of_measurement"] = "Ah"
+        hass_config_data["state_class"] = "measurement"
 
     hass_device = {
-        "identifiers": ['daly_bms'],
-        "manufacturer": 'Daly',
-        "model": 'Currently not available',
-        "name": 'Daly BMS',
-        "sw_version": 'Currently not available'
+        "identifiers": [mqtt_device_id],
+        "manufacturer": "Daly",
+        "model": "Smart BMS",
+        "name": mqtt_device_name,
+        "serial_number": bms_serial_number,
     }
+
     hass_config_data["device"] = hass_device
 
-    return hass_config_topic, json.dumps(hass_config_data)
+    return (
+        hass_config_topic,
+        json.dumps(hass_config_data),
+    )
 
 
 def mqtt_single_out(topic, data, retain=False):
@@ -196,7 +323,11 @@ def mqtt_iterator(result, base=''):
             else:
                 val = result[key]
 
-            mqtt_single_out(f'{args.mqtt_topic}{base}/{key}', val, retain=True)
+            mqtt_single_out(
+                f"{mqtt_topic_root}{base}/{key}",
+                val,
+                retain=True,
+            )
 
 
 def print_result(result):
