@@ -1,0 +1,17 @@
+Project TODO — apply robustness fixes
+
+1) Initialize `self.serial` to None in `DalyBMS.__init__` and guard `disconnect()`/`_read()` so they don't raise when not connected.
+
+2) Make `_format_message` robust: construct request bytes using fixed-width hex (zero-padded) or build bytes directly rather than concatenating decimal conversions.
+
+3) Fix header parsing in `_read` to check raw response bytes (e.g. inspect b[1], b[2], b[3]) instead of slicing hex strings.
+
+4) Add try/except around serial I/O (write/read) to catch `serial.SerialException` and return False or raise a documented exception.
+
+5) Add explicit length checks before every `struct.unpack()` to avoid `struct.error` on malformed frames.
+
+6) Fix bit parsing (use `.zfill()` with the appropriate width) in `get_status()`, `get_errors()`, `get_balancing_status()` and use clearer indexing; also avoid shadowing builtins by renaming variables like `id` → `cell_id`.
+
+7) Add smoke tests and quick validation steps after making the above changes.
+
+Created by automation on request.
