@@ -23,5 +23,13 @@ setup(
         "Programming Language :: Python :: 3.8",
     ],
     packages=["dalybms"],
-    scripts=["bin/daly-bms-cli"],
+    entry_points={
+        "console_scripts": [
+            "daly-bms-cli=dalybms.daly_bms_cli:main",
+        ],
+    },
+    install_requires=[
+		"pyserial>=3.5",
+		"paho-mqtt>=1.6",
+	],
 )
