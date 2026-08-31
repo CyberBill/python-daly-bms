@@ -5,6 +5,7 @@ import logging
 import re
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from dalybms import DalyBMS
 from dalybms import DalyBMSSinowealth
@@ -212,7 +213,28 @@ def mqtt_iterator(result, mqtt_context, base=''):
             )
 
 
+def utc_now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def with_last_active_utc(result, mqtt_context=None):
+    if not mqtt_context or not mqtt_context.args or not mqtt_context.args.mqtt:
+        return result
+
+    if result is None or result is False:
+        return result
+
+    if not isinstance(result, dict):
+        return result
+
+    updated_result = dict(result)
+    updated_result["last_active_utc"] = utc_now_iso()
+    return updated_result
+
+
 def print_result(result, mqtt_context=None):
+    result = with_last_active_utc(result, mqtt_context)
+
     if mqtt_context and mqtt_context.args.mqtt:
         mqtt_iterator(result, mqtt_context)
     else:
@@ -489,6 +511,15 @@ def main():
     if args.all:
         result = bms.get_all()
         print_result(result, mqtt_context)
+
+    if mqtt_context and mqtt_context.args.mqtt and result and isinstance(result, dict):
+        # Publish a retained fresh UTC timestamp for the most recent successful BMS contact.
+        mqtt_single_out(
+            f"{mqtt_context.topic_root}/last_active_utc",
+            utc_now_iso(),
+            mqtt_context,
+            retain=True,
+        )
 
     if args.check:
         status = bms.get_status()
