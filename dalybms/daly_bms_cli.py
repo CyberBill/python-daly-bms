@@ -4,9 +4,21 @@ import json
 import logging
 import re
 import sys
+from dataclasses import dataclass
 
 from dalybms import DalyBMS
 from dalybms import DalyBMSSinowealth
+
+
+@dataclass
+class MQTTContext:
+    args: object
+    logger: object
+    mqtt_client: object
+    topic_root: str
+    device_id: str
+    device_name: str
+    serial_number: str | None = None
 
 def sanitize_identifier(value):
     """
@@ -67,23 +79,23 @@ def humanize_entity_name(base):
 
     return leaf.replace("_", " ").title()
 
-def build_mqtt_hass_config_discovery(base):
+def build_mqtt_hass_config_discovery(base, mqtt_context):
     entity_path = sanitize_identifier(
         base.replace("/", "_")
     )
 
     entity_unique_id = (
-        f"{mqtt_device_id}_{entity_path}"
+        f"{mqtt_context.device_id}_{entity_path}"
     )
 
     hass_config_topic = (
         f"homeassistant/sensor/"
-        f"{mqtt_device_id}/"
+        f"{mqtt_context.device_id}/"
         f"{entity_path}/config"
     )
 
     state_topic = (
-        f"{mqtt_topic_root}{base}"
+        f"{mqtt_context.topic_root}{base}"
     )
 
     hass_config_data = {
@@ -132,11 +144,11 @@ def build_mqtt_hass_config_discovery(base):
         hass_config_data["state_class"] = "measurement"
 
     hass_device = {
-        "identifiers": [mqtt_device_id],
+        "identifiers": [mqtt_context.device_id],
         "manufacturer": "Daly",
         "model": "Smart BMS",
-        "name": mqtt_device_name,
-        "serial_number": bms_serial_number,
+        "name": mqtt_context.device_name,
+        "serial_number": mqtt_context.serial_number,
     }
 
     hass_config_data["device"] = hass_device
@@ -147,12 +159,12 @@ def build_mqtt_hass_config_discovery(base):
     )
 
 
-def mqtt_single_out(topic, data, retain=False):
-    logger.debug(
+def mqtt_single_out(topic, data, mqtt_context, retain=False):
+    mqtt_context.logger.debug(
         f'Send data: {data} on topic: {topic}, retain flag: {retain}'
     )
 
-    publish_result = mqtt_client.publish(
+    publish_result = mqtt_context.mqtt_client.publish(
         topic,
         data,
         qos=1,
@@ -168,35 +180,46 @@ def mqtt_single_out(topic, data, retain=False):
         )
 
 
-def mqtt_iterator(result, base=''):
+def mqtt_iterator(result, mqtt_context, base=''):
     for key in result.keys():
-        if type(result[key]) == dict:
-            mqtt_iterator(result[key], f'{base}/{key}')
-        else:
-            if args.mqtt_hass:
-                logger.debug('Sending out hass discovery message')
-                topic, output = build_mqtt_hass_config_discovery(f'{base}/{key}')
-                mqtt_single_out(topic, output, retain=True)
+        current_base = f'{base}/{key}' if base else f'/{key}'
 
-            if type(result[key]) == list:
+        if isinstance(result[key], dict):
+            mqtt_iterator(
+                result[key],
+                mqtt_context,
+                current_base,
+            )
+        else:
+            if mqtt_context.args and mqtt_context.args.mqtt_hass:
+                mqtt_context.logger.debug('Sending out hass discovery message')
+                topic, output = build_mqtt_hass_config_discovery(
+                    current_base,
+                    mqtt_context,
+                )
+                mqtt_single_out(topic, output, mqtt_context, retain=True)
+
+            if isinstance(result[key], list):
                 val = json.dumps(result[key])
             else:
                 val = result[key]
 
             mqtt_single_out(
-                f"{mqtt_topic_root}{base}/{key}",
+                f"{mqtt_context.topic_root}{current_base}",
                 val,
+                mqtt_context,
                 retain=True,
             )
 
 
-def print_result(result):
-    if args.mqtt:
-        mqtt_iterator(result)
+def print_result(result, mqtt_context=None):
+    if mqtt_context and mqtt_context.args.mqtt:
+        mqtt_iterator(result, mqtt_context)
     else:
         print(json.dumps(result, indent=2))
 
-def discover_bms_devices():
+
+def discover_bms_devices(args, logger, address, silent_logger):
     """
     Scan Daly RS485 BMS IDs 1 through 32.
 
@@ -372,11 +395,8 @@ def main():
 
     result = False
 
+    mqtt_context = None
     mqtt_client = None
-    bms_serial_number = None
-    mqtt_device_id = None
-    mqtt_device_name = None
-    mqtt_topic_root = None
 
     if args.mqtt:
         bms_serial_number = bms.get_serial_number()
@@ -412,6 +432,16 @@ def main():
         mqtt_client.connect(args.mqtt_broker, port=args.mqtt_port)
         mqtt_client.loop_start()
 
+        mqtt_context = MQTTContext(
+            args=args,
+            logger=logger,
+            mqtt_client=mqtt_client,
+            topic_root=mqtt_topic_root,
+            device_id=mqtt_device_id,
+            device_name=mqtt_device_name,
+            serial_number=bms_serial_number,
+        )
+
     if args.discover:
         if args.uart:
             print("--discover is only supported over RS485.")
@@ -421,39 +451,44 @@ def main():
             print("--discover is not supported for Sinowealth devices.")
             sys.exit(1)
 
-        result = discover_bms_devices()
+        result = discover_bms_devices(
+            args=args,
+            logger=logger,
+            address=address,
+            silent_logger=silent_logger,
+        )
     if args.status:
         result = bms.get_status()
-        print_result(result)
+        print_result(result, mqtt_context)
     if args.soc:
         result = bms.get_soc()
-        print_result(result)
+        print_result(result, mqtt_context)
     if args.mosfet:
         result = bms.get_mosfet_status()
-        print_result(result)
+        print_result(result, mqtt_context)
     if args.cell_voltages:
         if not args.status:
             bms.get_status()
         result = bms.get_cell_voltages()
-        print_result(result)
+        print_result(result, mqtt_context)
     if args.temperatures:
         result = bms.get_temperatures()
-        print_result(result)
+        print_result(result, mqtt_context)
     if args.balancing:
         result = bms.get_balancing_status()
-        print_result(result)
+        print_result(result, mqtt_context)
     if args.errors:
         result = bms.get_errors()
-        print_result(result)
+        print_result(result, mqtt_context)
     if args.battery_code:
         result = bms.get_battery_code()
-        print_result(result)
+        print_result(result, mqtt_context)
     if args.serial_number:
         result = bms.get_serial_number()
-        print_result(result)
+        print_result(result, mqtt_context)
     if args.all:
         result = bms.get_all()
-        print_result(result)
+        print_result(result, mqtt_context)
 
     if args.check:
         status = bms.get_status()
