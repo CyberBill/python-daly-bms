@@ -264,7 +264,9 @@ def discover_bms_devices(args, logger, address, silent_logger):
         )
 
         try:
-            candidate.connect(device=args.device)
+            candidate.connect(device=args.device, timeout=0.05)
+            candidate.serial.timeout = 0.05
+            candidate.serial.writeTimeout = 0.05
 
             board_info = candidate.get_board_info()
 
@@ -286,12 +288,13 @@ def discover_bms_devices(args, logger, address, silent_logger):
             }
 
             discovered.append(device)
-            
+
         except Exception:
             print(".", end="", flush=True)
 
         finally:
-            candidate.disconnect()
+            if getattr(candidate, "serial", None) and candidate.serial.is_open:
+                candidate.disconnect()
 
     print()
     print()

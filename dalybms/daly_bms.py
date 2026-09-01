@@ -101,21 +101,23 @@ class DalyBMS:
         self.address = address  # 4 = USB, 8 = Bluetooth
         self.bms_id = bms_id
 
-    def connect(self, device):
+    def connect(self, device, timeout=None):
         """
         Connect to a serial device
 
         :param device: Serial device, e.g. /dev/ttyUSB0
+        :param timeout: Optional override for the serial timeout in seconds
         """
+        serial_timeout = 0.5 if timeout is None else timeout
         self.serial = serial.Serial(
             port=device,
             baudrate=9600,
             bytesize=serial.EIGHTBITS,
             parity=serial.PARITY_NONE,
             stopbits=serial.STOPBITS_ONE,
-            timeout=0.5,
+            timeout=serial_timeout,
             xonxoff=False,
-            writeTimeout=0.5
+            writeTimeout=serial_timeout,
         )
         self.get_status()
 
