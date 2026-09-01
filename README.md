@@ -173,6 +173,24 @@ Send SOC data to a MQTT broker:
 # daly-bms-cli -d /dev/ttyUSB0 --soc --mqtt --mqtt-broker 192.168.1.123
 ```
 
+### Discover BMS devices
+
+Use `--discover` to scan the RS485 bus for Daly BMS devices. The value is optional and is interpreted as a 32-bit bitmask in hexadecimal.
+
+- `--discover` with no value defaults to `0xFFFFFFFF`, which scans all 32 possible IDs.
+- `--discover 0x0000001F` scans only IDs 1, 2, 3, 4, and 5.
+- The scan checks the least-significant bit first and then shifts the mask right each time, so the ID number corresponds to the bit position.
+
+Examples:
+```
+# Scan all possible BMS IDs
+# daly-bms-cli -d /dev/ttyUSB0 --discover
+# daly-bms-cli -d /dev/ttyUSB0 --discover 0xFFFFFFFF
+
+# Scan only IDs 1, 2, 3, 4, and 5
+# daly-bms-cli -d /dev/ttyUSB0 --discover 0x0000001F
+```
+
 ## Notes
 
 ### Bluetooth

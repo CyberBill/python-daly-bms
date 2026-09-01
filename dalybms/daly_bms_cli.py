@@ -241,60 +241,68 @@ def print_result(result, mqtt_context=None):
         print(json.dumps(result, indent=2))
 
 
-def discover_bms_devices(args, logger, address, silent_logger):
+def discover_bms_devices(args, logger, address, silent_logger, bitfield=0xFFFFFFFF):
     """
-    Scan Daly RS485 BMS IDs 1 through 32.
+    Scan Daly RS485 BMS IDs represented by the set bits in a 32-bit mask.
 
     A BMS is considered present when it returns valid board information.
     Additional identity fields are queried only after that first response.
     """
     discovered = []
 
-    print(f"Scanning Daly BMS IDs 1-32 on {args.device}...")
+    print(f"Scanning Daly BMS IDs from mask 0x{bitfield:08X} on {args.device}...")
     print()
 
-    for bms_id in range(1, 33):
-        logger.debug("Scanning BMS ID %d", bms_id)
+    scan_mask = bitfield
+    bms_id = 1
+    while scan_mask != 0:
+        if scan_mask & 1:
+            logger.debug("Scanning BMS ID %d", bms_id)
 
-        candidate = DalyBMS(
-            request_retries=1,
-            address=address,
-            bms_id=bms_id,
-            logger=silent_logger,
-        )
+            candidate = DalyBMS(
+                request_retries=1,
+                address=address,
+                bms_id=bms_id,
+                logger=silent_logger,
+            )
 
-        try:
-            candidate.connect(device=args.device, timeout=0.05)
-            candidate.serial.timeout = 0.05
-            candidate.serial.writeTimeout = 0.05
+            try:
+                candidate.connect(device=args.device, timeout=0.05)
+                candidate.serial.timeout = 0.05
+                candidate.serial.writeTimeout = 0.05
 
-            board_info = candidate.get_board_info()
+                board_info = candidate.get_board_info()
 
-            if not board_info:
+                if not board_info:
+                    print(".", end="", flush=True)
+                    bms_id += 1
+                    scan_mask >>= 1
+                    continue
+
+                print(f"[{bms_id}]", end="", flush=True)
+
+                serial_number = candidate.get_serial_number()
+                battery_code = candidate.get_battery_code()
+
+                device = {
+                    "bms_id": bms_id,
+                    "board_number": board_info.get("board_number"),
+                    "slave_number": board_info.get("slave_number"),
+                    "serial_number": serial_number or None,
+                    "battery_code": battery_code or None,
+                }
+
+                discovered.append(device)
+
+            except Exception:
                 print(".", end="", flush=True)
-                continue
 
-            print(f"[{bms_id}]", end="", flush=True)
+            finally:
+                if getattr(candidate, "serial", None) and candidate.serial.is_open:
+                    candidate.disconnect()
 
-            serial_number = candidate.get_serial_number()
-            battery_code = candidate.get_battery_code()
-
-            device = {
-                "bms_id": bms_id,
-                "board_number": board_info.get("board_number"),
-                "slave_number": board_info.get("slave_number"),
-                "serial_number": serial_number or None,
-                "battery_code": battery_code or None,
-            }
-
-            discovered.append(device)
-
-        except Exception:
-            print(".", end="", flush=True)
-
-        finally:
-            if getattr(candidate, "serial", None) and candidate.serial.is_open:
-                candidate.disconnect()
+        bms_id += 1
+        scan_mask >>= 1
 
     print()
     print()
@@ -375,9 +383,13 @@ def main():
                         help="Password to authenticate MQTT with",
                         type=str)
 
-    parser.add_argument("--discover",
-                        help="Scan RS485 BMS IDs (1-32) and report detected devices",
-                        action="store_true",
+    parser.add_argument(
+        "--discover",
+        nargs='?',
+        const=0xFFFFFFFF,
+        default=None,
+        type=lambda value: int(value, 0),
+        help="Scan RS485 BMS IDs represented by a 32-bit bitmask; default is 0xFFFFFFFF",
     )
 
     args = parser.parse_args()
@@ -402,7 +414,7 @@ def main():
     else:
         address = 4
 
-    if not args.discover:
+    if args.discover is None:
         if args.sinowealth:
             bms = DalyBMSSinowealth(
                 request_retries=args.retry,
@@ -467,7 +479,7 @@ def main():
             serial_number=bms_serial_number,
         )
 
-    if args.discover:
+    if args.discover is not None:
         if args.uart:
             print("--discover is only supported over RS485.")
             sys.exit(1)
@@ -481,6 +493,7 @@ def main():
             logger=logger,
             address=address,
             silent_logger=silent_logger,
+            bitfield=args.discover,
         )
     if args.status:
         result = bms.get_status()
