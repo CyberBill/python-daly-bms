@@ -62,6 +62,7 @@ class DalyBMSMQTT:
             "slave_number": "Slave Number",
             "highest_voltage": "Highest Cell Voltage",
             "lowest_voltage": "Lowest Cell Voltage",
+            "spread": "Cell Voltage Spread",
             "highest_cell": "Highest Cell Number",
             "lowest_cell": "Lowest Cell Number",
             "highest_temperature": "Highest Temperature",
@@ -155,6 +156,24 @@ class DalyBMSMQTT:
             )
         )
 
+    def derived_values(self, result):
+        """Return helper metrics derived from the raw BMS payload."""
+        if not isinstance(result, dict):
+            return result
+
+        derived = dict(result)
+
+        cell_range = derived.get("cell_voltage_range")
+        if isinstance(cell_range, dict):
+            highest = cell_range.get("highest_voltage")
+            lowest = cell_range.get("lowest_voltage")
+            if highest is not None and lowest is not None:
+                cell_range = dict(cell_range)
+                cell_range["spread"] = round(float(highest) - float(lowest), 3)
+                derived["cell_voltage_range"] = cell_range
+
+        return derived
+
     def _flatten(self, result, base="", include_hass_discovery=False):
         messages = []
 
@@ -197,7 +216,7 @@ class DalyBMSMQTT:
                 include_hass_discovery=include_hass_discovery,
             )
 
-        payload = dict(result)
+        payload = self.derived_values(result)
         if add_last_active_utc:
             payload["last_active_utc"] = self.utc_now_iso()
 

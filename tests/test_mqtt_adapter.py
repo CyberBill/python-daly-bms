@@ -15,6 +15,10 @@ class TestDalyBMSMQTT(unittest.TestCase):
         payload = {
             "soc": {"total_voltage": 57.7, "soc_percent": 99.1},
             "status": {"cells": 14},
+            "cell_voltage_range": {
+                "highest_voltage": 3.790,
+                "lowest_voltage": 3.710,
+            },
         }
 
         messages = adapter.serialize(payload, include_hass_discovery=True)
@@ -23,8 +27,13 @@ class TestDalyBMSMQTT(unittest.TestCase):
 
         self.assertIn("battery/daly/123/soc/total_voltage", topics)
         self.assertIn("battery/daly/123/status/cells", topics)
+        self.assertIn("battery/daly/123/cell_voltage_range/spread", topics)
         self.assertIn(
             "homeassistant/sensor/daly_123/soc_total_voltage/config",
+            topics,
+        )
+        self.assertIn(
+            "homeassistant/sensor/daly_123/cell_voltage_range_spread/config",
             topics,
         )
 
@@ -33,6 +42,7 @@ class TestDalyBMSMQTT(unittest.TestCase):
         }
         self.assertEqual(value_by_topic["battery/daly/123/soc/total_voltage"], 57.7)
         self.assertEqual(value_by_topic["battery/daly/123/status/cells"], 14)
+        self.assertEqual(value_by_topic["battery/daly/123/cell_voltage_range/spread"], 0.08)
 
         self.assertTrue(all(message.retain for message in messages))
 
