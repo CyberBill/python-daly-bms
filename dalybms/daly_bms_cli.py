@@ -2,13 +2,10 @@
 import argparse
 import json
 import logging
-import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
-from dalybms import DalyBMS
-from dalybms import DalyBMSSinowealth
+from dalybms import DalyBMS, DalyBMSMQTT, DalyBMSSinowealth
 
 
 @dataclass
@@ -16,227 +13,21 @@ class MQTTContext:
     args: object
     logger: object
     mqtt_client: object
+    mqtt_adapter: object
     topic_root: str
     device_id: str
     device_name: str
     serial_number: str | None = None
 
-def sanitize_identifier(value):
-    """
-    Convert a serial number or label into a safe MQTT/HA identifier.
-    """
-    return re.sub(
-        r"[^a-z0-9_]+",
-        "_",
-        str(value).lower(),
-    ).strip("_")
-
-
-def humanize_entity_name(base):
-    """
-    Convert an MQTT path into a concise Home Assistant entity name.
-
-    Examples:
-      /soc/total_voltage     -> Total Voltage
-      /cell_voltages/12      -> Cell 12 Voltage
-      /temperatures/1        -> Temperature 1
-    """
-    parts = [
-        part
-        for part in base.strip("/").split("/")
-        if part
-    ]
-
-    if len(parts) == 2 and parts[0] == "cell_voltages":
-        return f"Cell {int(parts[1]):02d} Voltage"
-
-    if len(parts) == 2 and parts[0] == "temperatures":
-        return f"Temperature {parts[1]}"
-
-    leaf = parts[-1] if parts else "value"
-
-    friendly_names = {
-        "total_voltage": "Pack Voltage",
-        "current": "Current",
-        "soc_percent": "State of Charge",
-        "battery_code": "Battery Code",
-        "serial_number": "Serial Number",
-        "bms_sw_version": "BMS Software Version",
-        "bms_hw_version": "BMS Hardware Version",
-        "board_number": "Board Number",
-        "slave_number": "Slave Number",
-        "highest_voltage": "Highest Cell Voltage",
-        "lowest_voltage": "Lowest Cell Voltage",
-        "highest_cell": "Highest Cell Number",
-        "lowest_cell": "Lowest Cell Number",
-        "highest_temperature": "Highest Temperature",
-        "lowest_temperature": "Lowest Temperature",
-        "highest_sensor": "Highest Temperature Sensor",
-        "lowest_sensor": "Lowest Temperature Sensor",
-    }
-
-    if leaf in friendly_names:
-        return friendly_names[leaf]
-
-    return leaf.replace("_", " ").title()
-
-def build_mqtt_hass_config_discovery(base, mqtt_context):
-    entity_path = sanitize_identifier(
-        base.replace("/", "_")
-    )
-
-    entity_unique_id = (
-        f"{mqtt_context.device_id}_{entity_path}"
-    )
-
-    hass_config_topic = (
-        f"homeassistant/sensor/"
-        f"{mqtt_context.device_id}/"
-        f"{entity_path}/config"
-    )
-
-    state_topic = (
-        f"{mqtt_context.topic_root}{base}"
-    )
-
-    hass_config_data = {
-        "unique_id": entity_unique_id,
-        "name": humanize_entity_name(base),
-        "state_topic": state_topic,
-    }
-
-    if "soc_percent" in base:
-        hass_config_data["device_class"] = "battery"
-        hass_config_data["unit_of_measurement"] = "%"
-        hass_config_data["state_class"] = "measurement"
-
-    elif (
-        "voltage" in base
-        and not (
-            "lowest_cell" in base
-            or "highest_cell" in base
-        )
-    ):
-        hass_config_data["device_class"] = "voltage"
-        hass_config_data["unit_of_measurement"] = "V"
-        hass_config_data["state_class"] = "measurement"
-        hass_config_data[
-            "suggested_display_precision"
-        ] = 3
-
-    elif "current" in base:
-        hass_config_data["device_class"] = "current"
-        hass_config_data["unit_of_measurement"] = "A"
-        hass_config_data["state_class"] = "measurement"
-
-    elif (
-        "temperature" in base
-        and "sensor" not in base
-    ):
-        hass_config_data["device_class"] = "temperature"
-        hass_config_data["unit_of_measurement"] = "°C"
-        hass_config_data["state_class"] = "measurement"
-        hass_config_data[
-            "suggested_display_precision"
-        ] = 1
-
-    elif "capacity" in base:
-        hass_config_data["unit_of_measurement"] = "Ah"
-        hass_config_data["state_class"] = "measurement"
-
-    hass_device = {
-        "identifiers": [mqtt_context.device_id],
-        "manufacturer": "Daly",
-        "model": "Smart BMS",
-        "name": mqtt_context.device_name,
-        "serial_number": mqtt_context.serial_number,
-    }
-
-    hass_config_data["device"] = hass_device
-
-    return (
-        hass_config_topic,
-        json.dumps(hass_config_data),
-    )
-
-
-def mqtt_single_out(topic, data, mqtt_context, retain=False):
-    mqtt_context.logger.debug(
-        f'Send data: {data} on topic: {topic}, retain flag: {retain}'
-    )
-
-    publish_result = mqtt_context.mqtt_client.publish(
-        topic,
-        data,
-        qos=1,
-        retain=retain,
-    )
-
-    publish_result.wait_for_publish()
-
-    if publish_result.rc != 0:
-        raise RuntimeError(
-            f'MQTT publish failed for topic {topic}, '
-            f'result code: {publish_result.rc}'
-        )
-
-
-def mqtt_iterator(result, mqtt_context, base=''):
-    for key in result.keys():
-        current_base = f'{base}/{key}' if base else f'/{key}'
-
-        if isinstance(result[key], dict):
-            mqtt_iterator(
-                result[key],
-                mqtt_context,
-                current_base,
-            )
-        else:
-            if mqtt_context.args and mqtt_context.args.mqtt_hass:
-                mqtt_context.logger.debug('Sending out hass discovery message')
-                topic, output = build_mqtt_hass_config_discovery(
-                    current_base,
-                    mqtt_context,
-                )
-                mqtt_single_out(topic, output, mqtt_context, retain=True)
-
-            if isinstance(result[key], list):
-                val = json.dumps(result[key])
-            else:
-                val = result[key]
-
-            mqtt_single_out(
-                f"{mqtt_context.topic_root}{current_base}",
-                val,
-                mqtt_context,
-                retain=True,
-            )
-
-
-def utc_now_iso():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def with_last_active_utc(result, mqtt_context=None):
-    if not mqtt_context or not mqtt_context.args or not mqtt_context.args.mqtt:
-        return result
-
-    if result is None or result is False:
-        return result
-
-    if not isinstance(result, dict):
-        return result
-
-    updated_result = dict(result)
-    updated_result["last_active_utc"] = utc_now_iso()
-    return updated_result
-
 
 def print_result(result, mqtt_context=None):
-    result = with_last_active_utc(result, mqtt_context)
-
     if mqtt_context and mqtt_context.args.mqtt:
-        mqtt_iterator(result, mqtt_context)
+        mqtt_context.mqtt_adapter.publish(
+            mqtt_context.mqtt_client,
+            result,
+            include_hass_discovery=mqtt_context.args.mqtt_hass,
+            add_last_active_utc=True,
+        )
     else:
         print(json.dumps(result, indent=2))
 
@@ -446,7 +237,7 @@ def main():
             bms.disconnect()
             sys.exit(1)
 
-        serial_identifier = sanitize_identifier(
+        serial_identifier = DalyBMSMQTT.sanitize_identifier(
             bms_serial_number
         )
 
@@ -469,10 +260,19 @@ def main():
         mqtt_client.connect(args.mqtt_broker, port=args.mqtt_port)
         mqtt_client.loop_start()
 
+        mqtt_adapter = DalyBMSMQTT(
+            device_id=mqtt_device_id,
+            device_name=mqtt_device_name,
+            topic_root=mqtt_topic_root,
+            serial_number=bms_serial_number,
+            logger=logger,
+        )
+
         mqtt_context = MQTTContext(
             args=args,
             logger=logger,
             mqtt_client=mqtt_client,
+            mqtt_adapter=mqtt_adapter,
             topic_root=mqtt_topic_root,
             device_id=mqtt_device_id,
             device_name=mqtt_device_name,
@@ -529,12 +329,11 @@ def main():
         print_result(result, mqtt_context)
 
     if mqtt_context and mqtt_context.args.mqtt and result and isinstance(result, dict):
-        # Publish a retained fresh UTC timestamp for the most recent successful BMS contact.
-        mqtt_single_out(
-            f"{mqtt_context.topic_root}/last_active_utc",
-            utc_now_iso(),
-            mqtt_context,
-            retain=True,
+        mqtt_context.mqtt_adapter.publish(
+            mqtt_context.mqtt_client,
+            result,
+            include_hass_discovery=mqtt_context.args.mqtt_hass,
+            add_last_active_utc=True,
         )
 
     if args.check:
