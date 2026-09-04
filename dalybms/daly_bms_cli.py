@@ -44,6 +44,8 @@ def discover_bms_devices(args, logger, address, silent_logger, bitfield=0xFFFFFF
     print(f"Scanning Daly BMS IDs from mask 0x{bitfield:08X} on {args.device}...")
     print()
 
+    probe_logger = logger if logger.isEnabledFor(logging.DEBUG) else silent_logger
+
     scan_mask = bitfield
     bms_id = 1
     while scan_mask != 0:
@@ -54,7 +56,7 @@ def discover_bms_devices(args, logger, address, silent_logger, bitfield=0xFFFFFF
                 request_retries=1,
                 address=address,
                 bms_id=bms_id,
-                logger=silent_logger,
+                logger=probe_logger,
             )
 
             try:
@@ -177,10 +179,10 @@ def main():
     parser.add_argument(
         "--discover",
         nargs='?',
-        const=0xFFFFFFFF,
+        const=0x0000FFFF,
         default=None,
         type=lambda value: int(value, 0),
-        help="Scan RS485 BMS IDs represented by a 32-bit bitmask; default is 0xFFFFFFFF",
+        help="Scan RS485 BMS IDs represented by a 16-bit bitmask; default support is IDs 1-16",
     )
 
     args = parser.parse_args()
@@ -192,9 +194,11 @@ def main():
         level = logging.WARNING
 
     logging.basicConfig(level=level, format=log_format, datefmt='%H:%M:%S')
-    logger = logging.getLogger()
+    logger = logging.getLogger("dalybms.cli")
+    logger.setLevel(level)
+    logger.propagate = True
 
-    silent_logger = logging.getLogger()
+    silent_logger = logging.getLogger("dalybms.discovery")
     silent_logger.setLevel(logging.CRITICAL)
     silent_logger.propagate = False
 

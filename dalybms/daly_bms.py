@@ -92,6 +92,11 @@ class DalyBMS:
         :param bms_id: BMS ID (1-16) (Default: 1)
         :param logger: Python Logger object for output (Default: None)
         """
+        if not 1 <= bms_id <= 16:
+            raise ValueError("BMS ID must be between 1 and 16 for the current protocol format")
+        if not 0 <= address <= 15:
+            raise ValueError("address must fit in a single nibble (0-15) for the current protocol format")
+
         self.status = None
         if logger:
             self.logger = logger
@@ -137,19 +142,43 @@ class DalyBMS:
 
     def _format_message(self, command, extra=""):
         """
-        Takes the command ID and formats a request message
+        Takes the command ID and formats a request message.
+
+        The Daly protocol encodes the address and target BMS number as single-byte
+        values in the header. We must therefore serialize them as hex bytes, not as
+        decimal ASCII digits, and we must not pad them into a longer string that can
+        silently mis-shape the packet when the ID exceeds a single byte.
 
         :param command: Command ID ("90" - "98")
         :return: Request message as bytes
         """
 
-        #When the master requests data from BMS ID 1, the command should include BMS ID 0
+        # In the Daly protocol, BMS ID 1 is encoded as 0x00 in the header.
         bms_id_for_requesting = self.bms_id - 1
 
         # 95 -> a58095080000000000000000c2
-        message = "a5%i%i%s08%s" % (self.address, bms_id_for_requesting, command, extra)
-        message = message.ljust(24, "0")
-        message_bytes = bytearray.fromhex(message)
+        # This is the correct packet shape when self.address == 8 and self.bms_id == 1.
+        # The upper nibble is the address and the lower nibble is the BMS ID, packed into
+        # a single byte (for example: 0x80 == address 8, BMS ID 0).
+        header_byte = ((self.address & 0x0F) << 4) | (bms_id_for_requesting & 0x0F)
+        message = bytearray([
+            0xA5,
+            header_byte,
+            int(command, 16),
+        ])
+
+        payload = bytes.fromhex(extra) if extra else b""
+        if len(payload) > 8:
+            raise ValueError(
+                "extra payload exceeds the supported protocol body size for a single-byte BMS ID"
+            )
+
+        message.extend(b"\x08")
+        message.extend(payload)
+        message.extend(b"\x00" * (8 - len(payload)))
+
+        # Final packet length is 13 bytes including the CRC byte.
+        message_bytes = bytes(message)
         message_bytes += self._calc_crc(message_bytes)
         self.logger.debug("w %s" % message_bytes.hex())
         return message_bytes
@@ -200,18 +229,29 @@ class DalyBMS:
             if len(b) == 0:
                 self.logger.debug("%i empty response for command %s" % (x, command))
                 break
-            self.logger.debug("%i %s %s" % (x, b.hex(), len(b)))
+            self.logger.debug("raw response %i: %s (len=%s)" % (x, b.hex(), len(b)))
             x += 1
             response_crc = self._calc_crc(b[:-1])
             if response_crc != b[-1:]:
-                self.logger.debug("response crc mismatch: %s != %s" % (response_crc.hex(), b[-1:].hex()))
+                self.logger.debug(
+                    "response crc mismatch for command %s: %s != %s" %
+                    (command, response_crc.hex(), b[-1:].hex())
+                )
             header = b[0:4].hex()
             # todo: verify  more header fields
             if header[2:4] != "%02x" % self.bms_id:
-                self.logger.debug("invalid header %s: wrong BMS ID (%s != %02x)" % (header, header[2:4], self.bms_id))
+                self.logger.debug(
+                    "discarding response for command %s: invalid header %s "
+                    "(wrong BMS ID: %s != %02x)" %
+                    (command, header, header[2:4], self.bms_id)
+                )
                 continue
             if header[4:6] != command:
-                self.logger.debug("invalid header %s: wrong command (%s != %s)" % (header, header[4:6], command))
+                self.logger.debug(
+                    "discarding response for command %s: invalid header %s "
+                    "(wrong command: %s != %s)" %
+                    (command, header, header[4:6], command)
+                )
                 continue
             data = b[4:-1]
             response_data.append(data)
