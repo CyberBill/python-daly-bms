@@ -103,6 +103,10 @@ class DalyBMSMQTT:
             hass_config_data["device_class"] = "battery"
             hass_config_data["unit_of_measurement"] = "%"
             hass_config_data["state_class"] = "measurement"
+        elif base.rstrip("/").endswith("last_active_utc"):
+            # The ISO 8601 UTC payload is already suitable for Home Assistant's
+            # timestamp device class, which renders recent values relatively.
+            hass_config_data["device_class"] = "timestamp"
         elif (
             "voltage" in base
             and not ("lowest_cell" in base or "highest_cell" in base)

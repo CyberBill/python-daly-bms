@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from dalybms import DalyBMSMQTT
@@ -45,6 +46,32 @@ class TestDalyBMSMQTT(unittest.TestCase):
         self.assertEqual(value_by_topic["battery/daly/123/cell_voltage_range/spread"], 0.08)
 
         self.assertTrue(all(message.retain for message in messages))
+
+    def test_last_active_timestamp_uses_timestamp_device_class(self):
+        adapter = DalyBMSMQTT(
+            device_id="daly_123",
+            device_name="Daly BMS 123",
+            topic_root="battery/daly/123",
+        )
+
+        messages = adapter.serialize(
+            {"last_active_utc": "2026-10-02T16:21:43Z"},
+            include_hass_discovery=True,
+        )
+
+        config = next(
+            message
+            for message in messages
+            if message.topic
+            == "homeassistant/sensor/daly_123/last_active_utc/config"
+        )
+
+        payload = json.loads(config.payload)
+        self.assertEqual(payload["device_class"], "timestamp")
+        self.assertEqual(
+            payload["state_topic"],
+            "battery/daly/123/last_active_utc",
+        )
 
 
 if __name__ == "__main__":
