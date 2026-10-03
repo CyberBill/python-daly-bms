@@ -69,6 +69,9 @@ class DalyBMSMQTT:
             "lowest_temperature": "Lowest Temperature",
             "highest_sensor": "Highest Temperature Sensor",
             "lowest_sensor": "Lowest Temperature Sensor",
+            "remaining_capacity_ah": "Remaining Capacity",
+            "rated_capacity_ah": "Rated Capacity",
+            "rated_cell_voltage": "Rated Cell Voltage",
         }
 
         if leaf in friendly_names:

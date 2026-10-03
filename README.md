@@ -111,6 +111,10 @@ Get everything possible:
     "current": 0.0,
     "soc_percent": 18.9
   },
+  "rated_parameters": {
+    "rated_capacity_ah": 100.0,
+    "rated_cell_voltage": 3.7
+  },
   "cell_voltage_range": {
     "highest_voltage": 3.78,
     "highest_cell": 14,
@@ -127,7 +131,7 @@ Get everything possible:
     "mode": "stationary",
     "charging_mosfet": true,
     "discharging_mosfet": true,
-    "capacity_ah": 5.67
+    "remaining_capacity_ah": 5.67
   },
   "status": {
     "cells": 14,

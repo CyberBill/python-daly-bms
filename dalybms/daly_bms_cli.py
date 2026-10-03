@@ -130,6 +130,7 @@ def main():
     parser.add_argument("--sinowealth", help="BMS with Sinowealth chip", action="store_true")
     parser.add_argument("--status", help="show status", action="store_true")
     parser.add_argument("--soc", help="show voltage, current, SOC", action="store_true")
+    parser.add_argument("--rated-parameters", help="show rated capacity and cell voltage", action="store_true")
     parser.add_argument("--mosfet", help="show mosfet status", action="store_true")
     parser.add_argument("--cell-voltages", help="show cell voltages", action="store_true")
     parser.add_argument("--temperatures", help="show temperature sensor values", action="store_true")
@@ -304,6 +305,9 @@ def main():
         print_result(result, mqtt_context)
     if args.soc:
         result = bms.get_soc()
+        print_result(result, mqtt_context)
+    if args.rated_parameters:
+        result = bms.get_rated_parameters()
         print_result(result, mqtt_context)
     if args.mosfet:
         result = bms.get_mosfet_status()

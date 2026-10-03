@@ -187,7 +187,7 @@ class DalyBMSSinowealth:
 
     def get_mosfet_status(self):
         requests = {
-            "full_capacity_ah": ("11", 1000),
+            "rated_capacity_ah": ("11", 1000),
             "remaining_capacity_ah": ("12", 1000),
         }
         responses = self._read_bulk(requests)

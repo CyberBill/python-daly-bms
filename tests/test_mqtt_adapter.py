@@ -73,6 +73,70 @@ class TestDalyBMSMQTT(unittest.TestCase):
             "battery/daly/123/last_active_utc",
         )
 
+    def test_remaining_capacity_uses_ah_and_a_descriptive_name(self):
+        adapter = DalyBMSMQTT(
+            device_id="daly_123",
+            device_name="Daly BMS 123",
+            topic_root="battery/daly/123",
+        )
+
+        messages = adapter.serialize(
+            {"mosfet_status": {"remaining_capacity_ah": 43.21}},
+            include_hass_discovery=True,
+        )
+
+        config = next(
+            message
+            for message in messages
+            if message.topic
+            == (
+                "homeassistant/sensor/daly_123/"
+                "mosfet_status_remaining_capacity_ah/config"
+            )
+        )
+
+        payload = json.loads(config.payload)
+        self.assertEqual(payload["name"], "Remaining Capacity")
+        self.assertEqual(payload["unit_of_measurement"], "Ah")
+        self.assertEqual(payload["state_class"], "measurement")
+
+    def test_rated_parameters_use_correct_names_and_units(self):
+        adapter = DalyBMSMQTT(
+            device_id="daly_123",
+            device_name="Daly BMS 123",
+            topic_root="battery/daly/123",
+        )
+
+        messages = adapter.serialize(
+            {
+                "rated_parameters": {
+                    "rated_capacity_ah": 86.0,
+                    "rated_cell_voltage": 3.7,
+                }
+            },
+            include_hass_discovery=True,
+        )
+
+        payload_by_topic = {
+            message.topic: json.loads(message.payload)
+            for message in messages
+            if message.topic.startswith("homeassistant/")
+        }
+
+        capacity = payload_by_topic[
+            "homeassistant/sensor/daly_123/"
+            "rated_parameters_rated_capacity_ah/config"
+        ]
+        voltage = payload_by_topic[
+            "homeassistant/sensor/daly_123/"
+            "rated_parameters_rated_cell_voltage/config"
+        ]
+
+        self.assertEqual(capacity["name"], "Rated Capacity")
+        self.assertEqual(capacity["unit_of_measurement"], "Ah")
+        self.assertEqual(voltage["name"], "Rated Cell Voltage")
+        self.assertEqual(voltage["unit_of_measurement"], "V")
+
 
 if __name__ == "__main__":
     unittest.main()

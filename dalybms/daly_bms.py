@@ -17,7 +17,7 @@ from .error_codes import ERROR_CODES
 #
 # Command  Description                              Status
 # -------  --------------------------------------   ----------------------------
-# 0x50     Parameter block #1                       TODO
+# 0x50     Rated capacity / rated cell voltage       ✓ Implemented
 # 0x51     Parameter block #2                       TODO
 # 0x52     Parameter block #3                       TODO
 # 0x53     Parameter block #4                       TODO
@@ -47,6 +47,7 @@ from .error_codes import ERROR_CODES
 #
 # Standard telemetry
 #
+# 0x21     Set State of Charge                      ✓ Implemented
 # 0x90     Pack Voltage / Current / SOC             ✓ Implemented
 # 0x91     Cell Voltage Range                       ✓ Implemented
 # 0x92     Temperature Range                        ✓ Implemented
@@ -335,10 +336,26 @@ class DalyBMS:
             "charging_mosfet": parts[1],
             "discharging_mosfet": parts[2],
             # "bms_cycles": parts[3], unstable result
-            "capacity_ah": parts[4] / 1000,
+            "remaining_capacity_ah": parts[4] / 1000,
         }
 
         return data
+
+    def get_rated_parameters(self, response_data=None):
+        """Return the configured rated capacity and nominal cell voltage."""
+        if not response_data:
+            response_data = self._read_request("50")
+        if not response_data:
+            return False
+
+        rated_capacity_mah, rated_cell_voltage_mv = struct.unpack(
+            ">II",
+            response_data,
+        )
+        return {
+            "rated_capacity_ah": rated_capacity_mah / 1000,
+            "rated_cell_voltage": rated_cell_voltage_mv / 1000,
+        }
 
     def get_status(self, response_data=None):
         if not response_data:
@@ -538,6 +555,7 @@ class DalyBMS:
     def get_all(self):
         return {
             "soc": self.get_soc(),
+            "rated_parameters": self.get_rated_parameters(),
             "cell_voltage_range": self.get_cell_voltage_range(),
             "temperature_range": self.get_temperature_range(),
             "mosfet_status": self.get_mosfet_status(),
@@ -585,13 +603,17 @@ class DalyBMS:
 
 
     # Set SoC. Value is float from 0.0 to 100.0
-    def set_soc(self, value):
+    def set_soc(self, value, response_data=None):
         v = round(value*10.0)
         if v > 1000 : v = 1000
         if v < 0 : v = 0
         extra='000000000000%0.4X' % v
-        response_data = self._read_request("21", extra=extra)
+        if not response_data:
+            response_data = self._read_request("21", extra=extra)
+        if not response_data:
+            return False
         self.logger.info(response_data.hex())
+        return True
 
     def restart(self, response_data=None):
         response_data = self._read("00","",1,False)
